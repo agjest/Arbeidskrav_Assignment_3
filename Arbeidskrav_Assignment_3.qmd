@@ -286,3 +286,268 @@ names(pend_02_25_boBF_agg)
 ```{r}
 dim(pend_02_25_boBF_agg)
 ```
+
+## Totalt antall arbeidstakere i hele landet per år
+
+```{r}
+#| label: fnr
+fnr <- c(
+  "30", "01", "02", "06", "03", "34", "04", "05", "38",
+  "07", "08", "42", "09", "10", "11", "46", "12", "14",
+  "15", "50", "16", "17", "18", "54", "19", "20", "31",
+  "32", "33", "39", "40", "55", "56"
+)
+```
+
+```{r}
+#| label: info-11616
+#| eval: false
+ApiData(
+  "https://data.ssb.no/api/v0/no/table/11616",
+  returnApiQuery = TRUE
+)
+```
+
+```{r}
+#| label: hent-11616
+#| cache: true
+arb_HL_ssb <- ApiData12(
+  urlToData = "11616",
+  Region = fnr,
+  Kjonn  = TRUE,
+  Alder  = TRUE,
+  ContentsCode = TRUE,
+  Tid    = as.character(2002:2025)
+)
+```
+
+```{r}
+#| label: sjekk-11616
+arb_HL_ssb |>
+  select(-value, -Region, -Tid) |>
+  select(where(is.character)) |>
+  map(unique)
+
+arb_HL_ssb |>
+  filter(Tid == "2002") |>
+  group_by(Kjonn, Alder, ContentsCode) |>
+  summarise(sum_2002 = sum(value, na.rm = TRUE), .groups = "drop") |>
+  print(n = 50)
+```
+
+```{r}
+#| label: tot-arb-HL
+tot_arb_HL <- arb_HL_ssb |>
+  as_tibble() |>
+  filter(
+    ContentsCode == "Bosatt",
+    Alder == "15-74"
+  ) |>
+  group_by(aar = Tid) |>
+  summarise(arbtak_HL = sum(value, na.rm = TRUE)) |>
+  mutate(arbtak_HL = as.integer(round(arbtak_HL)))
+
+print(tot_arb_HL)   
+```
+
+### Bor i Bokna-regionen jobber HL
+
+```{r}
+#| label: bBFjHL
+BF <- c(knr_u_SSV, "k1103", "k1108", "k1160")
+
+bBFjHL <- pend_02_25 %>%
+  filter(bkom %in% BF) %>%
+  group_by(aar) %>%
+  summarise(bBFjHL = sum(pendlere))
+```
+
+### Bor i RAL jobber i Bokna-regionen
+
+```{r}
+#| label: bRALjBF
+bRALjBF <- pend_02_25 %>%
+  filter(bkom == "k9999", akom %in% BF) %>%
+  group_by(aar) %>%
+  summarise(bRALjBF = sum(pendlere))
+
+tot_arb_HL <- left_join(tot_arb_HL, bBFjHL, by = join_by(aar))
+tot_arb_HL <- left_join(tot_arb_HL, bRALjBF, by = join_by(aar))
+
+tot_arb_HL <- tot_arb_HL |>
+  mutate(bRALjRAL = arbtak_HL - bBFjHL - bRALjBF)
+
+print(tot_arb_HL)   
+```
+
+```{r}
+#| label: total-og-RAL
+total <- tot_arb_HL %>%
+  select(aar, pendlere = arbtak_HL) %>%
+  mutate(
+    akom = "k0000",
+    akom_navn = "TotaltBo",
+    bkom = "k0000",
+    bkom_navn = "TotaltArb",
+    .before = pendlere
+  )
+
+p_bRALjRAL <- tot_arb_HL |>
+  transmute(
+    aar,
+    akom = "k9999", akom_navn = "RAL",
+    bkom = "k9999", bkom_navn = "RAL",
+    pendlere = as.integer(bRALjRAL)
+  )
+
+print(p_bRALjRAL, n = 5)
+
+pend_02_25 <- bind_rows(pend_02_25, p_bRALjRAL)
+
+```
+
+### Foreløpig pendlematrise for 2010
+
+```{r}
+#| label: tbl-pend2010
+#| tbl-cap: "Pendlematrise for 2010 for Boknafjord-regionen. k9999 er resten av landet."
+pend_02_25 |>
+  ungroup() |>
+  filter(aar == "2010") |>
+  select(bkom, akom, pendlere) |>
+  pivot_wider(names_from = akom, values_from = pendlere) |>
+  as_flextable(max_row = 30, show_coltype = FALSE) |>
+  fontsize(size = 5, part = "all") |>
+  line_spacing(space = 0.3, part = "all") |>
+  colformat_int(big.mark = " ") |>
+  set_table_properties(width = 0.15, layout = "autofit") |>
+  padding(padding = 3) |>
+  delete_part("footer")
+```
+
+### Totaler
+
+```{r}
+#| label: totaler
+totalt_arb <- pend_02_25 |>
+  group_by(aar, akom, akom_navn) |>
+  summarise(pendlere = sum(pendlere), .groups = "drop") |>
+  mutate(bkom = "k0000", bkom_navn = "TotaltArb")
+
+totalt_bo <- pend_02_25 |>
+  group_by(aar, bkom, bkom_navn) |>
+  summarise(pendlere = sum(pendlere), .groups = "drop") |>
+  mutate(akom = "k0000", akom_navn = "TotaltBo")
+
+pendle_data_02_25 <- bind_rows(pend_02_25, totalt_arb, totalt_bo, total) |>
+  select(aar, akom, akom_navn, bkom, bkom_navn, pendlere)
+
+dim(pendle_data_02_25)   
+print(pendle_data_02_25, n = 5)
+```
+
+## Andel pendlere
+
+```{r}
+#| label: andeler
+andel_pendle_data_02_25 <- pendle_data_02_25 %>%
+  unite(knrN, akom, akom_navn) %>%
+  group_by(aar, bkom, bkom_navn) %>%
+  pivot_wider(names_from = knrN, values_from = pendlere) %>%
+  as_tibble() %>%
+  mutate(
+    across(
+      .cols = k1103_Stavanger:k0000_TotaltBo,
+      .fns = function(x) round((x / k0000_TotaltBo) * 100, digits = 4)
+    )
+  ) %>%
+  ungroup()
+
+dim(andel_pendle_data_02_25)   
+names(andel_pendle_data_02_25)
+```
+```{r}
+#| label: tbl-andel2017
+#| tbl-cap: "Pendlematrise som viser andelen av arbeidsstyrken som pendler til ulike kommuner, 2017."
+tab <- andel_pendle_data_02_25 |>
+  filter(aar == 2017) |>
+  select(-aar, -bkom_navn)
+
+names(tab) <- str_replace_all(names(tab), "_", "\n")
+
+tab |>
+  as_flextable(show_coltype = FALSE, max_row = 30) |>
+  rotate(rotation = "tbrl", part = "header") |>
+  line_spacing(space = 0.5, part = "body") |>
+  colformat_double(big.mark = " ", digits = 2) |>
+  fontsize(size = 5, part = "all") |>
+  set_table_properties(width = 0.25, layout = "autofit") |>
+  padding(padding = 3) |>
+  delete_part("footer")
+```
+
+### Tilbake til long-format
+
+```{r}
+#| label: long
+andel_pendle_data_02_25_long <- andel_pendle_data_02_25 |>
+  pivot_longer(
+    cols = k1103_Stavanger:k0000_TotaltBo,
+    names_to = c("akom", "akom_navn"),
+    names_sep = "_",
+    values_to = "andel"
+  ) |>
+  select(aar, akom, akom_navn, bkom, bkom_navn, andel)
+
+pend_02_25 |> 
+  filter(aar == "2002") |> 
+  select(akom, akom_navn) |> 
+  distinct() |> 
+  as_flextable(max_row = 30, show_coltype = FALSE) |> 
+  line_spacing(space = 0.3) |> 
+  delete_part("footer")
+
+dim(andel_pendle_data_02_25_long)   
+print(andel_pendle_data_02_25_long, n = 8, width = 70)
+
+andel_pendle_data_02_25_long <- andel_pendle_data_02_25_long |>
+  mutate(aar = dmy(paste0("01-01-", aar)))
+
+head(andel_pendle_data_02_25_long)
+```
+
+## Bo- og arbeidsmarkedsregioner NIBR/TØI 2020
+
+```{r}
+#| label: ba-reg
+ba49 <- paste0("k", c(1103, 1108, 1124, 1127, 1120, 1122, 1121, 1119, 1144, 1130))
+ba50 <- paste0("k", c(1106, 1146, 1149, 4612, 1145))
+ba51 <- "k1133"
+ba52 <- "k1134"
+ba53 <- "k1135"
+ba55 <- c("k1160", "k4611")
+
+ba_region <- function(k, prefiks) {
+  case_when(
+    k %in% ba49 ~ paste0(prefiks, "49"),
+    k %in% ba50 ~ paste0(prefiks, "50"),
+    k %in% ba51 ~ paste0(prefiks, "51"),
+    k %in% ba52 ~ paste0(prefiks, "52"),
+    k %in% ba53 ~ paste0(prefiks, "53"),
+    k %in% ba55 ~ paste0(prefiks, "55"),
+    TRUE ~ paste0(prefiks, "99")
+  )
+}
+
+pend_ba <- pend_02_25 |>
+  mutate(
+    ba_reg_bo  = ba_region(bkom, "bo"),
+    ba_reg_arb = ba_region(akom, "arb")
+  )
+
+pend_ba |>
+  filter(aar == "2010") |>
+  group_by(ba_reg_bo, ba_reg_arb) |>
+  summarise(pendlere = sum(pendlere), .groups = "drop") |>
+  pivot_wider(names_from = ba_reg_arb, values_from = pendlere)
+```
