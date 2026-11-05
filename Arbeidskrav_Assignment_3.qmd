@@ -466,6 +466,7 @@ andel_pendle_data_02_25 <- pendle_data_02_25 %>%
 dim(andel_pendle_data_02_25)   
 names(andel_pendle_data_02_25)
 ```
+
 ```{r}
 #| label: tbl-andel2017
 #| tbl-cap: "Pendlematrise som viser andelen av arbeidsstyrken som pendler til ulike kommuner, 2017."
@@ -551,3 +552,361 @@ pend_ba |>
   summarise(pendlere = sum(pendlere), .groups = "drop") |>
   pivot_wider(names_from = ba_reg_arb, values_from = pendlere)
 ```
+
+## Pendling internt i region 49
+
+```{r}
+#| label: r49-funksjon
+r49_long <- function(y) {
+  pend_02_25 |>
+    filter(aar == as.character(y)) |>
+    mutate(across(c(bkom, akom), ~ if_else(.x %in% ba49, .x, "k9999"))) |>
+    group_by(bkom, akom) |>
+    summarise(pendlere = sum(pendlere), .groups = "drop") |>
+    mutate(across(c(bkom, akom), ~ str_remove(.x, "k"))) |>
+    arrange(bkom, akom)
+}
+
+r49_matrise <- function(y) {
+  r49_long(y) |>
+    pivot_wider(names_from = akom, values_from = pendlere) |>
+    as_flextable(show_coltype = FALSE, max_row = 30) |>
+    colformat_int(big.mark = " ") |>
+    fontsize(size = 7, part = "all") |>
+    set_table_properties(layout = "autofit") |>
+    delete_part("footer")
+}
+```
+
+### Pendlematrise for region 49 (Stavanger/Sandnes) 2015
+
+```{r}
+#| label: tbl-r49-2015
+#| tbl-cap: "Bo- og arbeidsmarkedmatrise for region 49 for året 2015. Kommunene utenfor regionen er samlet i 9999."
+r49_matrise(2015)
+```
+
+### Pendlematrise for region 49 2020
+
+```{r}
+#| label: tbl-r49-2020
+#| tbl-cap: "Bo- og arbeidsmarkedmatrise for region 49 for året 2020."
+r49_matrise(2020)
+```
+
+```{r}
+#| label: r49-svar
+r49_2020 <- r49_long(2020)
+
+# 1. Bodde i Sola (1124) og jobbet i Kvitsøy (1144)
+r49_2020 |> filter(bkom == "1124", akom == "1144")
+
+# 2. Bor utenfor region 49 og jobbet i Sandnes (1108)
+r49_2020 |> filter(bkom == "9999", akom == "1108")
+
+# 3. Kommuner med flere som pendler ut av regionen enn inn fra utenfor
+ut  <- r49_2020 |> filter(bkom != "9999", akom == "9999") |> select(kom = bkom, ut = pendlere)
+inn <- r49_2020 |> filter(akom != "9999", bkom == "9999") |> select(kom = akom, inn = pendlere)
+
+left_join(ut, inn, by = "kom") |>
+  mutate(netto_ut = ut - inn) |>
+  filter(ut > inn)
+```
+
+**spørsmpl:** Hvor mange bodde i Sola (1124) kommune og jobbet i Kvitsøy (1144) kommune i 2020? *Svar:* 18 personer bodde i Sola og jobbet i Kvitsøy i 2020 (rad 1124, kolonne 1144).
+
+Hvor mange som bor utenfor bo- og arbeidsmarkedssone 49 arbeidet i Sandnes (1108) i 2020? *Svar:* 4 050 personer som bodde utenfor region 49, jobbet i Sandnes i 2020 (rad 9999, kolonne 1108).
+
+Hvilke kommuner i bo- og arbeidsmarkedregion 49 hadde i 2020 flere arbeidstakere som pendlet ut av regionen enn det var arbeidstakere utenfor regionen som pendlet inn til kommunen? *Svar:* I 2020 var det seks kommuner i region 49 der flere pendlet ut av regionen enn det kom pendlere inn fra utenfor regionen: Kå, Klepp, Time, Gjesdal, Randaberg og Strand. Strand hadde den største nettoutpendlingen. Der pendlet 564 ut av regionen, mens bare 191 pendlet inn fra utenfor. Hå hadde den minste forkjellen, med 596 ut og 522 inn. De fire andre kommunene i regionen, Stavanger, Sandnes, Sola og Kvitsøy, hadde flere innpendlere fra utenfor regionen enn utpendlere. For Stavanger, Sandnes og Sola henger det trolog sammen med at de er regionens største arbeidsmarkeder, med mange arbeidsplasser som trekker til seg arbeidstakere fra et stort omland.
+
+## Definerer funksjoner for plot og tabell
+
+```{r}
+#| label: funksjoner
+tab_pendlere <- function(data, knr, y = 2003, n = 6) {
+  data = filter(data, bkom == knr)
+  data = filter(data, !akom %in% c(knr, "k0000"))
+  data = filter(data, year(aar) == y)
+  data = arrange(data, desc(andel))
+  data = head(data, n = n)
+  data = select(data, `Place of work` = akom_navn, `Prop. in %` = andel)
+  flxtab = as_flextable(data, show_coltype = FALSE, max_row = 30)
+  flxtab = delete_part(flxtab, "footer")
+  flxtab = theme_booktabs(flxtab)
+  flxtab = line_spacing(flxtab, space = 0.3)
+  flxtab
+}
+
+plot_pendlere <- function(data, knr, grense = 1, lw = 1) {
+  data |>
+    filter(bkom == knr, !akom %in% c(knr, "k0000")) |>
+    group_by(akom) |>
+    filter(max(andel, na.rm = TRUE) > grense) |>    
+    ungroup() |>
+    ggplot(aes(x = aar, y = andel, group = akom_navn, colour = akom_navn)) +
+    geom_line(linewidth = lw) +
+    labs(y = "Andel av arbeidstakere", colour = "Arbeidssted") +
+    theme(legend.position = "bottom")
+}
+
+apd_0225_l <- andel_pendle_data_02_25_long
+rm(andel_pendle_data_02_25_long)
+```
+
+## Bor og jobber i samme kommune i Bokna-regionen
+
+```{r}
+#| label: fig-intern
+#| fig-cap: "Intern pendling"
+apd_0225_l |>
+  filter(akom == bkom, !akom %in% c("k9999", "k0000")) |>
+  ggplot(aes(x = aar, y = andel, group = bkom, colour = bkom)) +
+  geom_line() +
+  labs(title = "Intern pendling") +
+  theme(legend.position = "bottom")
+```
+
+**Hva er den generelle trenden? Går utviklingen mot at man bor nært der man jobber?**
+
+*Svar:* Den generelle trenden er ensvak nedgang i andelen som bpr og jobber i samme kommune. For eksempel falt andelen i Stavanger fra 73,1% i 2002 til 67,4% i 2025. utviklingen går altså ikke mot at folk bor nærmere jobben, men mot at flere pendler mellom kommunene. Disriktskommuner som Sauda og Suldal har fortsatt høy interpendling, mens omlandskommuner som Randaberg og Klepp har lav, fordi mange av innbyggerne pendler til Stavanger og Sandes.
+
+```{r}
+#| label: tbl-intern2025
+#| tbl-cap: "Andelen av arbeidstakere som jobber i samme kommune som de bor i, 2025."
+apd_0225_l |>
+  filter(akom == bkom, akom != "k9999", year(aar) == 2025) |>
+  arrange(desc(andel)) |>
+  rename(Bosted = bkom_navn) |>
+  as_flextable(show_coltype = FALSE, max_row = 30) |>
+  colformat_double(digits = 1) |>
+  line_spacing(space = 0.3)
+```
+
+### Internpendling i et utvalg kommuner
+
+```{r}
+#| label: fig-utvalg
+apd_0225_l |>
+  filter(akom == bkom, bkom %in% c("k1133", "k1119", "k1144", "k1103", "k1130")) |>
+  ggplot(aes(x = aar, y = andel, group = bkom_navn, colour = bkom_navn)) +
+  geom_line(linewidth = 1.25) +
+  labs(colour = "Bosted") +
+  theme(legend.position = "bottom")
+```
+
+**Ser ideen fra «Det grønne skiftet» om å jobbe nær hjemmet ut til å ha fått gjennomslag?**
+
+*Svar:* Nei, ideen ser ikke ut til å ha fått gjennomslag. I alle de fem kommunene er andelen som bor og jobber i samme kommune lavere i 2025 enn i 2002. Hjelmeland falt fra omtrent 80% til 69%, Stavanger fra 73% til 67% og Hå fra 63% til 55%. Strand økte frem til 2010, men har falt siden, og Kvitsøy svinger mye, men ligger også lavere enn i starten. Flere pendler altså ut fra hjemkommunen sin nå enn tidligere.
+
+## Hvor jobber folk bosatt i Stavanger kommune?
+
+```{r}
+#| label: fig-stavanger
+plot_pendlere(apd_0225_l, "k1103", grense = 1, lw = 1.25) +
+  ylim(0, 12)
+```
+
+```{r}
+#| label: tbl-1103pend
+#| tbl-cap: "Andelene som pendler ut av Stavanger i 2025."
+tab_pendlere(apd_0225_l, "k1103", y = 2025, n = 5) |>
+  colformat_double(digits = 1)
+```
+
+**Hvordan har andelen arbeidstakere som både bor og jobber i hhv. Stavanger og Sandnes (dvs. bor og jobber i samme by) utviklet seg over tid?**
+
+*Svar:* Andelen har gått jevnt ned i begge byene fra 2002 til 2025. Stavanger har hele tiden hatt klart høyere internpendling enn Sandnes. Figuren for Stavanger viser at stadig flere av innbyggerne pendler til nabokommunene, særlig Sola, der andelen økte fra rundt 7% til 11%, og til Sandnes, der den økte fra 8% til 11%. Andelen som jonner i resten av landet (RAL), har derimot gått litt ned.
+
+### Internpendling i Stavanger og Sandnes
+
+```{r}
+#| label: fig-stav-sand
+apd_0225_l |>
+  filter(akom == bkom, bkom %in% c("k1103", "k1108")) |>
+  ggplot(aes(x = aar, y = andel, group = bkom_navn, colour = bkom_navn)) +
+  geom_line(linewidth = 1.25) +
+  labs(colour = "Bosted", y = "Andel som bor og jobber i samme kommune") +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+#| label: stav-sand-endring
+apd_0225_l |>
+  filter(akom == bkom, bkom %in% c("k1103", "k1108"),
+         year(aar) %in% c(2002, 2025)) |>
+  mutate(aar = year(aar)) |>
+  select(bkom_navn, aar, andel) |>
+  pivot_wider(names_from = aar, values_from = andel, names_prefix = "aar_") |>
+  mutate(endring = aar_2025 - aar_2002)
+```
+
+**Hvordan har andelen utviklet seg? Hva er andelene i 2002 og 2025, og hvor stor er endringen?**
+
+*Svar:* Andelen som både bor og jobber i samme kommune, har gått ned i både Stavanger og Sandnes. I Stavanger falt den fra 73,1% i 2002 til 67,4% i 2025, en nedgang på 5,7%. I Sandnes falt den fra 48,9% til 44,3%, en nedgang på 4,6%. Stavanger har altså klart høyere internpendling enn Sandnes, men nedgangen har vært omtrent like stor i begge byene.
+
+## Hvor jobber folk bosatt i Sandnes kommune?
+
+```{r}
+#| label: fig-sandnes
+plot_pendlere(apd_0225_l, "k1108", grense = 1.7, lw = 1.25)
+```
+
+```{r}
+#| label: tbl-1108-2002
+#| tbl-cap: "Andelene som pendler ut av Sandnes i 2002."
+tab_pendlere(apd_0225_l, "k1108", y = 2002, n = 5) |> colformat_double(digits = 1)
+```
+
+```{r}
+#| label: tbl-1108-2013
+#| tbl-cap: "Andelene som pendler ut av Sandnes i 2013."
+tab_pendlere(apd_0225_l, "k1108", y = 2013, n = 5) |> colformat_double(digits = 1)
+```
+
+```{r}
+#| label: tbl-1108-2025
+#| tbl-cap: "Andelene som pendler ut av Sandnes i 2025."
+tab_pendlere(apd_0225_l, "k1108", y = 2025, n = 5) |> colformat_double(digits = 1)
+```
+
+**Hvordan vil du beskrive utviklingen for Sandnes, og hva kan forklare forskjellen mellom Stavanger og Sandnes?**
+
+*Svar:* Andelen som bor og jobber i Sandnes, har falt fra 48,9% i 2002 til 44,3% i 2025. Stavanger er fortsatt det viktigste stedet å pendle til (28,2%), men pendlingen til Sola har økt fra 6,8% til 11,2%. Forskjellen fra Stavanger skyldes trolig at Stavanger har flest arbeidsplasser i regionen, mens Sandnes i større grad er en bokommune der mange pendler til Stavanger, Sola og Forus.
+
+## Hvor jobber folk bosatt i Sola kommune?
+
+```{r}
+#| label: fig-sola
+plot_pendlere(apd_0225_l, "k1124", grense = 1, lw = 1.25)
+```
+
+```{r}
+#| label: tbl-1124
+#| tbl-cap: "Andelene som pendler ut av Sola kommune i 2025."
+tab_pendlere(apd_0225_l, "k1124", y = 2025, n = 5) |> colformat_double(digits = 1)
+```
+
+## Hvor jobber folk bosatt i Klepp kommune?
+
+```{r}
+#| label: fig-klepp
+plot_pendlere(apd_0225_l, "k1120", grense = 1, lw = 1.25)
+```
+
+```{r}
+#| label: tbl-1120
+#| tbl-cap: "Andelene som pendler ut av Klepp kommune i 2025."
+tab_pendlere(apd_0225_l, "k1120", y = 2025, n = 5) |> colformat_double(digits = 1)
+```
+
+**Hvordan vil dere karakterisere utviklingen i Klepp kommune?**
+
+*Svar:* Andelen som bor og jobber i Klepp, har falt fra omtrent 40%i 2002 til 33,5% i 2025. Det er den laveste andelen i regionen. Mange pendler til Sandnes, Stavanger, Time og Sola, så Klepp har i økende grad blitt en bokommune.
+
+## Hvor jobber folk bosatt i Haugesund kommune?
+
+```{r}
+#| label: fig-haugesund
+plot_pendlere(apd_0225_l, "k1106", grense = 1, lw = 1.25)
+```
+
+```{r}
+#| label: tbl-1106
+#| tbl-cap: "Pendling ut av Haugesund kommune i 2025."
+tab_pendlere(apd_0225_l, "k1106", y = 2025, n = 5) |> colformat_double(digits = 1)
+```
+
+## Hvor jobber folk bosatt i Karmøy kommune?
+
+```{r}
+#| label: fig-karmoy
+plot_pendlere(apd_0225_l, "k1149", grense = 1, lw = 1.25)
+```
+
+```{r}
+#| label: tbl-1149
+#| tbl-cap: "Pendling ut av Karmøy kommune i 2025."
+tab_pendlere(apd_0225_l, "k1149", y = 2025, n = 6) |> colformat_double(digits = 1)
+```
+
+## Pendlematriser
+
+```{r}
+#| label: pendlematrise-funksjon
+pendle_matrise <- function(y) {
+  pendle_data_02_25 |>
+    filter(aar == as.character(y)) |>
+    select(bkom, akom, pendlere) |>
+    pivot_wider(names_from = akom, values_from = pendlere) |>
+    as_flextable(show_coltype = FALSE, max_row = 30) |>
+    rotate(rotation = "tbrl", part = "header") |>
+    colformat_int(big.mark = " ") |>
+    fontsize(size = 5, part = "all") |>
+    line_spacing(space = 0.3, part = "all") |>
+    set_table_properties(width = 0.25, layout = "autofit") |>
+    padding(padding = 3) |>
+    delete_part("footer")
+}
+```
+
+### 2002
+
+```{r}
+#| label: pendlematrise-funksjon
+pendle_matrise <- function(y) {
+  pendle_data_02_25 |>
+    filter(aar == as.character(y)) |>
+    select(bkom, akom, pendlere) |>
+    pivot_wider(names_from = akom, values_from = pendlere) |>
+    as_flextable(show_coltype = FALSE, max_row = 30) |>
+    colformat_int(big.mark = " ") |>
+    fontsize(size = 6, part = "all") |>
+    line_spacing(space = 0.3, part = "all") |>
+    padding(padding = 2, part = "all") |>
+    set_table_properties(width = 1, layout = "autofit") |>   
+    delete_part("footer")
+}
+
+#| label: tbl-pm2002
+#| tbl-cap: "Pendlematrise år 2002."
+pendle_matrise(2002)
+```
+
+### 2005
+
+```{r}
+#| label: tbl-pm2005
+#| tbl-cap: "Pendlematrise år 2005."
+pendle_matrise(2005)
+```
+
+### 2015
+
+```{r}
+#| label: tbl-pm2015
+#| tbl-cap: "Pendlematrise år 2015."
+pendle_matrise(2015)
+```
+
+### 2020
+
+```{r}
+#| label: tbl-pm2020
+#| tbl-cap: "Pendlematrise år 2020."
+pendle_matrise(2020)
+```
+
+### 2025
+
+```{r}
+#| label: tbl-pm2025
+#| tbl-cap: "Pendlematrise år 2025 for Bokna-regionen."
+pendle_matrise(2025)
+```
+
+## Appendiks: Bruk av KI
+
+*Vi har brukt Claude til å gi oss en fremgangsmåte til å utføre oppgaven.*
+
+https://claude.ai/share/f33f79be-bdca-4d6f-8761-4b57cbec85dd
+
